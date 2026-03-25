@@ -1,0 +1,443 @@
+[
+    {
+        "summary": {
+            "status": "success",
+            "average_latency": 123.695,
+            "average_throughput": 0.157873,
+            "total_router_area": 195.96730401177598,
+            "total_router_power": 81.31189813248,
+            "total_link_power": 3.46497951572082,
+            "energy_per_packet": 1.3246387132531376
+        },
+        "orion_details": {
+            "Pleakage": 2489.302016,
+            "Pinternal": 53406.594621439996,
+            "Pswitching": 25416.00149504,
+            "Ainbuffer": 189695590.4,
+            "Aoutbuffer": 1418622.64832,
+            "Acrossbar": 1804553.0111999998,
+            "Aswvc": 2869668.864,
+            "Aclkctrl": 178869.08825600002,
+            "Atotal": 195967304.011776,
+            "Ptotal": 81311.89813248
+        },
+        "orion_config": {
+            "n_vcs": 4,
+            "vc_buf_size": 8,
+            "frequency": 1000000000.0,
+            "data_width": 64
+        },
+        "experiment_config": {
+            "nodes_per_router": 1,
+            "node_link_latency": 5,
+            "num_vcs": 4,
+            "packet_size": 1,
+            "message_size": 16,
+            "frequency": 1000000000.0,
+            "link_fault_rate": 0.0,
+            "router_fault_rate": 0.0,
+            "n_entropy_bits": 8,
+            "traffic": "trace_atlahs_llama7B-64",
+            "in_order_ratio": 1.0,
+            "n_routers": 64,
+            "setting": "noc",
+            "width": 3.25,
+            "height": 3.25,
+            "vc_buf_size": 8,
+            "data_width": 64,
+            "topology": "hypercube",
+            "routing_function": "modular_routing",
+            "mod_routing_function": "lturn",
+            "mod_selection_function": "hashed",
+            "name": "gpu_trace_noc_hypercube_modular_routing_lturn_hashed",
+            "plot_type": "heatmap_trace"
+        },
+        "booksim_details": {
+            "trace": {
+                "return_code": 0,
+                "status": "Success",
+                "runtime": 7206.076768159866,
+                "cdg_check": "unknown",
+                "flit_latency": {
+                    "avg": 123.695,
+                    "min": 21.0,
+                    "max": 2771.0
+                },
+                "fragmentation": {
+                    "avg": 0.0,
+                    "min": 0.0,
+                    "max": 0.0
+                },
+                "injected_packet_rate": {
+                    "avg": 0.157888,
+                    "min": 0.150199,
+                    "max": 0.162158
+                },
+                "accepted_packet_rate": {
+                    "avg": 0.157873,
+                    "min": 0.150433,
+                    "max": 0.162158
+                },
+                "injected_flit_rate": {
+                    "avg": 0.157888,
+                    "min": 0.150199,
+                    "max": 0.162158
+                },
+                "accepted_flit_rate": {
+                    "avg": 0.157873,
+                    "min": 0.150433,
+                    "max": 0.162158
+                },
+                "injected_packet_size": {
+                    "avg": 1.0
+                },
+                "accepted_packet_size": {
+                    "avg": 1.0
+                },
+                "hops": {
+                    "avg": 4.84718
+                },
+                "total_run_time_cycles": 790625.0,
+                "truly_simulated_cycles": 791892.0,
+                "total_trace_messages": 31556,
+                "total_trace_instructions": 95416,
+                "total_ooo_packets": 0,
+                "peak_rob_size": 0,
+                "peak_robs_per_node": 0,
+                "selection_function_storage_overhead": 0,
+                "total_run_time": 7203.02,
+                "number_of_deadlocked_runs": 0
+            }
+        },
+        "booksim_config": {
+            "deadlock_attempts": 10,
+            "seed": "time",
+            "ignore_cycles": 1,
+            "trace_time_out": 7200,
+            "precision": 0.001,
+            "saturation_factor": 2,
+            "router_latency": 3,
+            "warmup_periods": 1,
+            "sim_count": 1,
+            "hold_switch_for_packet": 0,
+            "vc_allocator": "separable_input_first",
+            "sw_allocator": "separable_input_first",
+            "alloc_iters": 1,
+            "wait_for_tail_credit": 0,
+            "priority": "none",
+            "injection_rate_uses_flits": 1,
+            "deadlock_warn_timeout": 200000,
+            "time_limit": 43200,
+            "latency_thres": 5000.0,
+            "routing_function": "modular_routing",
+            "modular_routing_function": "lturn",
+            "modular_selection_function": "hashed",
+            "num_vcs": 4,
+            "vc_buf_size": 8,
+            "packet_size": 1,
+            "message_size": 16,
+            "in_order_ratio": 1.0,
+            "n_entropy_bits": 8,
+            "threshold_mode": "bounded",
+            "mode": "trace",
+            "traffic": "uniform",
+            "trace_file": "booksim2/src/traces/llama7B-64.json",
+            "sample_period": 1000000,
+            "repetition": 2
+        }
+    },
+    {
+        "summary": {
+            "status": "success",
+            "average_latency": 100.698,
+            "average_throughput": 0.169839,
+            "total_router_area": 195.96730401177598,
+            "total_router_power": 81.31189813248,
+            "total_link_power": 3.46497951572082,
+            "energy_per_packet": 1.3246387132531376
+        },
+        "orion_details": {
+            "Pleakage": 2489.302016,
+            "Pinternal": 53406.594621439996,
+            "Pswitching": 25416.00149504,
+            "Ainbuffer": 189695590.4,
+            "Aoutbuffer": 1418622.64832,
+            "Acrossbar": 1804553.0111999998,
+            "Aswvc": 2869668.864,
+            "Aclkctrl": 178869.08825600002,
+            "Atotal": 195967304.011776,
+            "Ptotal": 81311.89813248
+        },
+        "orion_config": {
+            "n_vcs": 4,
+            "vc_buf_size": 8,
+            "frequency": 1000000000.0,
+            "data_width": 64
+        },
+        "experiment_config": {
+            "nodes_per_router": 1,
+            "node_link_latency": 5,
+            "num_vcs": 4,
+            "packet_size": 1,
+            "message_size": 16,
+            "frequency": 1000000000.0,
+            "link_fault_rate": 0.0,
+            "router_fault_rate": 0.0,
+            "n_entropy_bits": 8,
+            "traffic": "trace_atlahs_llama7B-64",
+            "in_order_ratio": 1.0,
+            "n_routers": 64,
+            "setting": "noc",
+            "width": 3.25,
+            "height": 3.25,
+            "vc_buf_size": 8,
+            "data_width": 64,
+            "topology": "hypercube",
+            "routing_function": "modular_routing",
+            "mod_routing_function": "lturn",
+            "mod_selection_function": "hashed",
+            "name": "gpu_trace_noc_hypercube_modular_routing_lturn_hashed",
+            "plot_type": "heatmap_trace"
+        },
+        "booksim_details": {
+            "trace": {
+                "return_code": 0,
+                "status": "Success",
+                "runtime": 6539.52229078114,
+                "cdg_check": "unknown",
+                "flit_latency": {
+                    "avg": 100.698,
+                    "min": 21.0,
+                    "max": 1673.0
+                },
+                "fragmentation": {
+                    "avg": 0.0,
+                    "min": 0.0,
+                    "max": 0.0
+                },
+                "injected_packet_rate": {
+                    "avg": 0.169839,
+                    "min": 0.163616,
+                    "max": 0.170216
+                },
+                "accepted_packet_rate": {
+                    "avg": 0.169839,
+                    "min": 0.163616,
+                    "max": 0.170216
+                },
+                "injected_flit_rate": {
+                    "avg": 0.169839,
+                    "min": 0.163616,
+                    "max": 0.170216
+                },
+                "accepted_flit_rate": {
+                    "avg": 0.169839,
+                    "min": 0.163616,
+                    "max": 0.170216
+                },
+                "injected_packet_size": {
+                    "avg": 1.0
+                },
+                "accepted_packet_size": {
+                    "avg": 1.0
+                },
+                "hops": {
+                    "avg": 4.3796
+                },
+                "total_run_time_cycles": 768238.0,
+                "truly_simulated_cycles": 768243.0,
+                "total_trace_messages": 33000,
+                "total_trace_instructions": 99879,
+                "total_ooo_packets": 0,
+                "peak_rob_size": 0,
+                "peak_robs_per_node": 0,
+                "selection_function_storage_overhead": 0,
+                "total_run_time": 6536.47,
+                "number_of_deadlocked_runs": 0
+            }
+        },
+        "booksim_config": {
+            "deadlock_attempts": 10,
+            "seed": "time",
+            "ignore_cycles": 1,
+            "trace_time_out": 7200,
+            "precision": 0.001,
+            "saturation_factor": 2,
+            "router_latency": 3,
+            "warmup_periods": 1,
+            "sim_count": 1,
+            "hold_switch_for_packet": 0,
+            "vc_allocator": "separable_input_first",
+            "sw_allocator": "separable_input_first",
+            "alloc_iters": 1,
+            "wait_for_tail_credit": 0,
+            "priority": "none",
+            "injection_rate_uses_flits": 1,
+            "deadlock_warn_timeout": 200000,
+            "time_limit": 43200,
+            "latency_thres": 5000.0,
+            "routing_function": "modular_routing",
+            "modular_routing_function": "lturn",
+            "modular_selection_function": "hashed",
+            "num_vcs": 4,
+            "vc_buf_size": 8,
+            "packet_size": 1,
+            "message_size": 16,
+            "in_order_ratio": 1.0,
+            "n_entropy_bits": 8,
+            "threshold_mode": "bounded",
+            "mode": "trace",
+            "traffic": "uniform",
+            "trace_file": "booksim2/src/traces/llama7B-64.json",
+            "sample_period": 1000000,
+            "repetition": 2
+        }
+    },
+    {
+        "summary": {
+            "status": "success",
+            "average_latency": 123.515,
+            "average_throughput": 0.158281,
+            "total_router_area": 195.96730401177598,
+            "total_router_power": 81.31189813248,
+            "total_link_power": 3.46497951572082,
+            "energy_per_packet": 1.3246387132531376
+        },
+        "orion_details": {
+            "Pleakage": 2489.302016,
+            "Pinternal": 53406.594621439996,
+            "Pswitching": 25416.00149504,
+            "Ainbuffer": 189695590.4,
+            "Aoutbuffer": 1418622.64832,
+            "Acrossbar": 1804553.0111999998,
+            "Aswvc": 2869668.864,
+            "Aclkctrl": 178869.08825600002,
+            "Atotal": 195967304.011776,
+            "Ptotal": 81311.89813248
+        },
+        "orion_config": {
+            "n_vcs": 4,
+            "vc_buf_size": 8,
+            "frequency": 1000000000.0,
+            "data_width": 64
+        },
+        "experiment_config": {
+            "nodes_per_router": 1,
+            "node_link_latency": 5,
+            "num_vcs": 4,
+            "packet_size": 1,
+            "message_size": 16,
+            "frequency": 1000000000.0,
+            "link_fault_rate": 0.0,
+            "router_fault_rate": 0.0,
+            "n_entropy_bits": 8,
+            "traffic": "trace_atlahs_llama7B-64",
+            "in_order_ratio": 1.0,
+            "n_routers": 64,
+            "setting": "noc",
+            "width": 3.25,
+            "height": 3.25,
+            "vc_buf_size": 8,
+            "data_width": 64,
+            "topology": "hypercube",
+            "routing_function": "modular_routing",
+            "mod_routing_function": "lturn",
+            "mod_selection_function": "hashed",
+            "name": "gpu_trace_noc_hypercube_modular_routing_lturn_hashed",
+            "plot_type": "heatmap_trace"
+        },
+        "booksim_details": {
+            "trace": {
+                "return_code": 0,
+                "status": "Success",
+                "runtime": 7206.649585396051,
+                "cdg_check": "unknown",
+                "flit_latency": {
+                    "avg": 123.515,
+                    "min": 21.0,
+                    "max": 2555.0
+                },
+                "fragmentation": {
+                    "avg": 0.0,
+                    "min": 0.0,
+                    "max": 0.0
+                },
+                "injected_packet_rate": {
+                    "avg": 0.158292,
+                    "min": 0.149941,
+                    "max": 0.164296
+                },
+                "accepted_packet_rate": {
+                    "avg": 0.158281,
+                    "min": 0.149926,
+                    "max": 0.164296
+                },
+                "injected_flit_rate": {
+                    "avg": 0.158292,
+                    "min": 0.149941,
+                    "max": 0.164296
+                },
+                "accepted_flit_rate": {
+                    "avg": 0.158281,
+                    "min": 0.149926,
+                    "max": 0.164296
+                },
+                "injected_packet_size": {
+                    "avg": 1.0
+                },
+                "accepted_packet_size": {
+                    "avg": 1.0
+                },
+                "hops": {
+                    "avg": 4.84707
+                },
+                "total_run_time_cycles": 780335.0,
+                "truly_simulated_cycles": 782184.0,
+                "total_trace_messages": 31230,
+                "total_trace_instructions": 94398,
+                "total_ooo_packets": 0,
+                "peak_rob_size": 0,
+                "peak_robs_per_node": 0,
+                "selection_function_storage_overhead": 0,
+                "total_run_time": 7203.51,
+                "number_of_deadlocked_runs": 0
+            }
+        },
+        "booksim_config": {
+            "deadlock_attempts": 10,
+            "seed": "time",
+            "ignore_cycles": 1,
+            "trace_time_out": 7200,
+            "precision": 0.001,
+            "saturation_factor": 2,
+            "router_latency": 3,
+            "warmup_periods": 1,
+            "sim_count": 1,
+            "hold_switch_for_packet": 0,
+            "vc_allocator": "separable_input_first",
+            "sw_allocator": "separable_input_first",
+            "alloc_iters": 1,
+            "wait_for_tail_credit": 0,
+            "priority": "none",
+            "injection_rate_uses_flits": 1,
+            "deadlock_warn_timeout": 200000,
+            "time_limit": 43200,
+            "latency_thres": 5000.0,
+            "routing_function": "modular_routing",
+            "modular_routing_function": "lturn",
+            "modular_selection_function": "hashed",
+            "num_vcs": 4,
+            "vc_buf_size": 8,
+            "packet_size": 1,
+            "message_size": 16,
+            "in_order_ratio": 1.0,
+            "n_entropy_bits": 8,
+            "threshold_mode": "bounded",
+            "mode": "trace",
+            "traffic": "uniform",
+            "trace_file": "booksim2/src/traces/llama7B-64.json",
+            "sample_period": 1000000,
+            "repetition": 2
+        }
+    }
+]

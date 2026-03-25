@@ -1,0 +1,768 @@
+#include <filesystem>
+#include <fstream>
+
+#include "lash_tor_routing.hpp"
+#include "topology_hash.hpp"
+#include "../config_utils.hpp"
+
+#include <algorithm>
+#include <cassert>
+#include <iostream>
+
+lash_tor_routing::lash_tor_routing(const Configuration &config) : _config(config) {
+	num_vcs = _config.GetInt("num_vcs");
+	n_layers = num_vcs;				// We use one layer per VC, otherwise, in-order delivery is not guaranteed
+	fallback_alg = "up_down";		// Default fallback algorithm (as described in the paper)
+	repetition = _config.GetInt("repetition");
+	cache_directory = _config.GetStr("path_for_cache");
+	// Random seed
+    if(config.GetStr("seed") == "time") {
+      shuffle_seed = int(time(NULL));
+    } else {
+      shuffle_seed = config.GetInt("seed");
+    }
+}
+
+void lash_tor_routing::initialize(
+		const vector<map<int, map<int, tuple<int, int, int>>>> &router_list,
+		int n_routers, int n_vcs) const {
+
+	initialized = true;
+	num_vcs = n_vcs;
+	topo_n_routers = n_routers;
+
+	build_node_maps(router_list, n_routers);
+	build_links(router_list, n_routers);
+	compute_prev_router_map(router_list);
+
+	// assign normal layers to available VCs (need at least 1 VC for fallback)
+	normal_layers = max(1, min(n_layers - 1, max(1, n_vcs - 1)));
+	fallback_layer = normal_layers; // virtual layer id
+
+	// dependency graphs for normal layers
+	layer_cdg.assign(normal_layers, {});
+
+	compute_vc_ranges(n_vcs);
+
+	// fallback routing
+	if (fallback_alg == "up_down") {
+		fallback_routing = make_unique<up_down_routing>(_config);
+	} else if (fallback_alg == "left_right") {
+		fallback_routing = make_unique<left_right_routing>(_config);
+	} else if (fallback_alg == "lturn") {
+		fallback_routing = make_unique<lturn_routing>(_config);
+	} else {
+		cerr << "Unknown fallback algorithm: " << fallback_alg << endl;
+		assert(false);
+	}
+
+	// Enable dense stamping if size is reasonable
+	// num_channel_ids = (size_t)n_routers * (size_t)n_routers;
+	// const size_t max_dense =
+	//		 50 * 1000 * 1000;
+	// dense_reach_enabled = (num_channel_ids > 0 && num_channel_ids <=
+	// max_dense);
+	dense_reach_enabled = true;
+	if (dense_reach_enabled) {
+		reach_stamp.assign(num_channel_ids, 0);
+		reach_token = 1;
+	} else {
+		reach_stamp.clear();
+	}
+
+
+	// Compute hash of the topology
+	size_t topology_hash = router_hash::hash_router_list(router_list);
+	string rt_cache_file = cache_directory + "lash_tor_routing_table_" + to_string(topology_hash) + "_rep" + to_string(repetition) + "_" + to_string(n_layers) + "layers.bin";
+	// Check if the routing tables for this topology and repetition are already cached
+	if (filesystem::exists(rt_cache_file)) {
+		// Load routing tables from cache
+		LashTorRoutingTable rt;
+		rt.load(rt_cache_file);
+		routing_table = rt.routing_table;
+		layer_table = rt.layer_table;
+		fallback_paths = rt.fallback_paths;
+		int n_fallback_false = 0;
+		int n_fallback_true = 0;
+		for (const auto &kv1 : fallback_paths) {
+			for (const auto &kv2 : kv1.second) {
+				if (kv2.second)
+					n_fallback_true++;
+				else
+					n_fallback_false++;
+			}
+		}
+		cout << "Loaded LASH-TOR routing tables from cache: " << rt_cache_file << endl;
+		cout << "Number of fallback pairs: False=" << n_fallback_false << ", True=" << n_fallback_true << endl;
+	} else {
+		// Build list of (src,dst) pairs only among routers that have nodes
+		vector<pair<int, int>> pairs;
+		pairs.reserve(routers_with_nodes.size() * routers_with_nodes.size());
+		for (int s : routers_with_nodes) {
+			for (int d : routers_with_nodes) {
+				if (s != d)
+					pairs.emplace_back(s, d);
+			}
+		}
+
+		// Randomize processing order
+		mt19937 rng(shuffle_seed);
+		shuffle(pairs.begin(), pairs.end(), rng);
+
+		// Build shortest paths and assign layers
+		for (auto [src, dst] : pairs) {
+			DagInfo dag = build_shortest_path_dag(src, n_routers);
+			if (dag.dist.empty() || dag.dist[dst] == INT_MAX) {
+				fallback_paths[src][dst] = true;
+				continue;
+			}
+
+			BestPath best = find_best_shortest_path_all(dag, src, dst);
+			if (!best.found) {
+				fallback_paths[src][dst] = true;
+				continue;
+			}
+
+			commit_path(src, dst, best.path, best.hop_layers);
+			fallback_paths[src][dst] = false;
+		}
+		// Store routing tables in cache for future runs (if not already stored by a different thread)
+		if (!filesystem::exists(rt_cache_file)) {
+			LashTorRoutingTable rt;
+			rt.routing_table = routing_table;
+			rt.layer_table   = layer_table;
+			rt.fallback_paths = fallback_paths;
+			rt.save(rt_cache_file);
+			cout << "Saved LASH-TOR routing tables to cache: " << rt_cache_file << endl;
+			int n_fallback_false = 0;
+			int n_fallback_true = 0;
+			for (const auto &kv1 : fallback_paths) {
+				for (const auto &kv2 : kv1.second) {
+					if (kv2.second)
+						n_fallback_true++;
+					else
+						n_fallback_false++;
+				}
+			}
+			cout << "Number of fallback pairs: False=" << n_fallback_false << ", True=" << n_fallback_true << endl;
+		}
+	}
+	// Validate all paths
+	// validate_tables(router_list, n_routers);
+}
+
+void lash_tor_routing::build_node_maps(
+		const vector<map<int, map<int, tuple<int, int, int>>>> &router_list,
+		int n_routers) const {
+
+	node_to_router.clear();
+	routers_with_nodes.clear();
+	router_has_nodes.assign(n_routers, 0);
+
+	for (int rid = 0; rid < n_routers; ++rid) {
+		auto it = router_list[0].find(rid);
+		if (it == router_list[0].end())
+			continue;
+		bool any = false;
+		for (const auto &n : it->second) {
+			node_to_router[n.first] = rid;
+			any = true;
+		}
+		if (any) {
+			router_has_nodes[rid] = 1;
+			routers_with_nodes.push_back(rid);
+		}
+	}
+}
+
+void lash_tor_routing::build_links(
+		const vector<map<int, map<int, tuple<int, int, int>>>> &router_list,
+		int n_routers) const {
+
+	edge_ports.clear();
+	adj.assign(n_routers, {});
+
+	for (int u = 0; u < n_routers; ++u) {
+		auto it = router_list[1].find(u);
+		if (it == router_list[1].end())
+			continue;
+
+		for (const auto &e : it->second) {
+			int v = e.first;
+			int out_port = get<0>(e.second);
+			edge_ports[u][v].push_back(out_port);
+		}
+	}
+
+	for (int u = 0; u < n_routers; ++u) {
+		auto it = edge_ports.find(u);
+		if (it == edge_ports.end())
+			continue;
+		for (const auto &kv : it->second) {
+			adj[u].push_back(kv.first);
+		}
+		sort(adj[u].begin(), adj[u].end());
+		adj[u].erase(unique(adj[u].begin(), adj[u].end()), adj[u].end());
+	}
+}
+
+void lash_tor_routing::compute_prev_router_map(
+		const vector<map<int, map<int, tuple<int, int, int>>>> &router_list) const {
+
+	prev_router_map.clear();
+	for (const auto &u_entry : router_list[1]) {
+		int u = u_entry.first;
+		for (const auto &e : u_entry.second) {
+			int v = e.first;
+			int in_port_at_v = get<1>(e.second);
+			prev_router_map[v][in_port_at_v] = u;
+		}
+	}
+}
+
+void lash_tor_routing::compute_vc_ranges(int n_vcs) const {
+	// distribute normal VCs evenly across normal layers; remainder to fallback
+	int L = normal_layers;
+	int normal_vcs = max(1, n_vcs - 1); // try to leave at least 1 vc for fallback
+	int base = normal_vcs / L;
+	int rem = normal_vcs % L;
+
+	layer_to_vc.assign(L + 1, VcRange{0, -1}); // +1 for fallback
+	int cur = 0;
+	for (int l = 0; l < L; ++l) {
+		int take = base + (l < rem ? 1 : 0);
+		if (take < 1)
+			take = 1;
+		layer_to_vc[l] = {cur, min(n_vcs - 1, cur + take - 1)};
+		cur += take;
+	}
+
+	fallback_vc_begin = min(cur, n_vcs - 1);
+	layer_to_vc[L] = {fallback_vc_begin, n_vcs - 1};
+}
+
+vector<int> lash_tor_routing::get_ports(int u, int v) const {
+	auto it = edge_ports.find(u);
+	if (it == edge_ports.end())
+		return {};
+	auto jt = it->second.find(v);
+	if (jt == it->second.end())
+		return {};
+	return jt->second;
+}
+
+bool lash_tor_routing::reachable_channel(int layer, int start_ch,
+																				 int target_ch) const {
+	if (start_ch == target_ch)
+		return true;
+
+	if (layer < 0 || layer >= (int)layer_cdg.size())
+		return false;
+
+	// Dense-stamp BFS
+	if (dense_reach_enabled) {
+		// token bump
+		reach_token++;
+		if (reach_token == 0) {
+			fill(reach_stamp.begin(), reach_stamp.end(), 0);
+			reach_token = 1;
+		}
+
+		deque<int> dq;
+		dq.push_back(start_ch);
+		if ((size_t)start_ch < reach_stamp.size())
+			reach_stamp[start_ch] = reach_token;
+
+		while (!dq.empty()) {
+			int u = dq.front();
+			dq.pop_front();
+			auto it = layer_cdg[layer].find(u);
+			if (it == layer_cdg[layer].end())
+				continue;
+
+			for (int v : it->second) {
+				if (v == target_ch)
+					return true;
+				if ((size_t)v >= reach_stamp.size())
+					continue;
+				if (reach_stamp[v] != reach_token) {
+					reach_stamp[v] = reach_token;
+					dq.push_back(v);
+				}
+			}
+		}
+		return false;
+	}
+
+	// Fallback sparse visited set
+	deque<int> dq;
+	unordered_set<int> vis;
+	dq.push_back(start_ch);
+	vis.insert(start_ch);
+
+	while (!dq.empty()) {
+		int u = dq.front();
+		dq.pop_front();
+		auto it = layer_cdg[layer].find(u);
+		if (it == layer_cdg[layer].end())
+			continue;
+
+		for (int v : it->second) {
+			if (v == target_ch)
+				return true;
+			if (!vis.count(v)) {
+				vis.insert(v);
+				dq.push_back(v);
+			}
+		}
+	}
+	return false;
+}
+
+bool lash_tor_routing::would_create_cycle_ch(int layer, int from_ch,
+																						 int to_ch) const {
+	// adding from_ch -> to_ch creates a cycle iff to_ch can already reach from_ch
+	return reachable_channel(layer, to_ch, from_ch);
+}
+
+void lash_tor_routing::add_cdg_edge(int layer, int from_ch, int to_ch) const {
+	layer_cdg[layer][from_ch].insert(to_ch);
+}
+
+// Shortest path DAG
+lash_tor_routing::DagInfo
+lash_tor_routing::build_shortest_path_dag(int src, int n_routers) const {
+	DagInfo dag;
+	dag.dist.assign(n_routers, INT_MAX);
+	dag.pred.assign(n_routers, {});
+
+	queue<int> q;
+	dag.dist[src] = 0;
+	q.push(src);
+
+	while (!q.empty()) {
+		int u = q.front();
+		q.pop();
+		int du = dag.dist[u];
+
+		for (int v : adj[u]) {
+			if (dag.dist[v] == INT_MAX) {
+				dag.dist[v] = du + 1;
+				dag.pred[v].push_back(u);
+				q.push(v);
+			} else if (dag.dist[v] == du + 1) {
+				dag.pred[v].push_back(u);
+			}
+		}
+	}
+
+	// deterministic predecessor order
+	for (auto &pv : dag.pred) {
+		sort(pv.begin(), pv.end());
+		pv.erase(unique(pv.begin(), pv.end()), pv.end());
+	}
+
+	return dag;
+}
+
+// All shortest paths search
+lash_tor_routing::BestPath
+lash_tor_routing::find_best_shortest_path_all(const DagInfo &dag, int src,
+																							int dst) const {
+	BestPath best;
+	best.found = false;
+	best.layers_used = INT_MAX;
+
+	vector<int> rev_path;
+	rev_path.reserve((size_t)dag.dist[dst] + 1);
+
+	dfs_all_shortest_paths(dst, src, dag, rev_path, best, dst);
+	return best;
+}
+
+void lash_tor_routing::dfs_all_shortest_paths(int node, int src,
+																							const DagInfo &dag,
+																							vector<int> &rev_path,
+																							BestPath &best, int dst) const {
+
+	(void)dst;
+
+	rev_path.push_back(node);
+
+	if (node == src) {
+		vector<int> path = rev_path;
+		reverse(path.begin(), path.end()); // src..dst
+
+		int used = INT_MAX;
+		vector<int> hop_layers;
+		if (assign_layers_for_path(path, used, hop_layers)) {
+			if (!best.found || used < best.layers_used) {
+				best.found = true;
+				best.layers_used = used;
+				best.path = std::move(path);
+				best.hop_layers = std::move(hop_layers);
+				// early exit if we found a 1-layer solution
+				if (best.layers_used == 1) {
+					rev_path.pop_back();
+					return;
+				}
+			}
+		}
+
+		rev_path.pop_back();
+		return;
+	}
+
+	// early stop if already perfect
+	if (best.found && best.layers_used == 1) {
+		rev_path.pop_back();
+		return;
+	}
+
+	for (int p : dag.pred[node]) {
+		dfs_all_shortest_paths(p, src, dag, rev_path, best, dst);
+		if (best.found && best.layers_used == 1)
+			break;
+	}
+
+	rev_path.pop_back();
+}
+
+bool lash_tor_routing::assign_layers_for_path(
+		const vector<int> &path, int &layers_used_out,
+		vector<int> &hop_layers_out) const {
+
+	if (path.size() < 2)
+		return false;
+
+	const size_t hops = path.size() - 1;
+	hop_layers_out.assign(hops, 0);
+
+	int cur_layer = 0;
+	int max_layer_used = 0;
+
+	int prev_ch = -1;
+	int prev_layer = -1;
+
+	for (size_t i = 0; i < hops; ++i) {
+		int u = path[i];
+		int v = path[i + 1];
+		int cur_ch = chan_id(u, v);
+
+		// Choose a layer >= cur_layer.
+		int chosen = -1;
+
+		for (int l = cur_layer; l < normal_layers; ++l) {
+			// If we stay in same layer as previous hop, we add CDG dependency
+			// prev_ch
+			// -> cur_ch. If we move to a higher layer, we *break* the dependency
+			// chain (VC transition).
+			bool can_assign = true;
+			if (i >= 1 && l == prev_layer) {
+				if (would_create_cycle_ch(l, prev_ch, cur_ch))
+					can_assign = false;
+			}
+			if (can_assign) {
+				chosen = l;
+				break;
+			}
+		}
+
+		if (chosen < 0)
+			return false;
+
+		hop_layers_out[i] = chosen;
+		cur_layer = chosen;
+		if (chosen > max_layer_used)
+			max_layer_used = chosen;
+
+		prev_ch = cur_ch;
+		prev_layer = chosen;
+	}
+
+	layers_used_out = max_layer_used + 1;
+	return true;
+}
+
+void lash_tor_routing::commit_path(int src, int dst, const vector<int> &path,
+																	 const vector<int> &hop_layers) const {
+
+	const size_t hops = path.size() - 1;
+
+	// Store next hop and layer at each router on the path
+	for (size_t i = 0; i < hops; ++i) {
+		int u = path[i];
+		int v = path[i + 1];
+		int l = hop_layers[i];
+		routing_table[src][u][dst] = v;
+		layer_table[src][u][dst] = l;
+	}
+
+	// Add CDG dependencies for consecutive channels
+	for (size_t i = 1; i < hops; ++i) {
+		if (hop_layers[i - 1] != hop_layers[i])
+			continue; // transition breaks dependency
+		int a = path[i - 1];
+		int b = path[i];
+		int c = path[i + 1];
+		int ch1 = chan_id(a, b);
+		int ch2 = chan_id(b, c);
+		int l = hop_layers[i];
+		add_cdg_edge(l, ch1, ch2);
+	}
+}
+
+vector<tuple<int, int, int>> lash_tor_routing::route(vector<map<int, map<int, tuple<int, int, int>>>> router_list, int n_routers, int n_nodes, int n_vcs, int src_rid, int cur_rid, int cur_vc, int dst_nid, int dst_rid, int in_port, int flit_id) const {
+
+
+	// Data-structures computed here (and potentially cached): routing_table, layer_table, fallback_paths
+	if (!initialized) {
+		initialize(router_list, n_routers, n_vcs);
+	}
+
+	// Ejection if at destination router
+	if (cur_rid == dst_rid) {
+		if (router_list[0].count(cur_rid)) {
+			for (const auto &node_entry : router_list[0].at(cur_rid)) {
+				if (node_entry.first == dst_nid) {
+					int port = get<0>(node_entry.second);
+					return {make_tuple(port, 0, n_vcs - 1)};
+				}
+			}
+		}
+		return {};
+	}
+
+	// fallback for this pair
+	auto fb1 = fallback_paths.find(src_rid);
+	if (fb1 != fallback_paths.end()) {
+		auto fb2 = fb1->second.find(dst_rid);
+		if (fb2 != fb1->second.end() && fb2->second) {
+			auto res = fallback_routing->route(router_list, n_routers, n_nodes, n_vcs, src_rid, cur_rid, cur_vc, dst_nid, dst_rid, in_port, flit_id);
+			vector<tuple<int, int, int>> out;
+			out.reserve(res.size());
+			for (auto &t : res)
+				out.emplace_back(get<0>(t), fallback_vc_begin, n_vcs - 1);
+			return out;
+		}
+	}
+
+	// Lookup next hop + layer
+	int next = -1;
+	int lyr = -1;
+
+	auto s1 = routing_table.find(src_rid);
+	if (s1 != routing_table.end()) {
+		auto s2 = s1->second.find(cur_rid);
+		if (s2 != s1->second.end()) {
+			auto s3 = s2->second.find(dst_rid);
+			if (s3 != s2->second.end())
+				next = s3->second;
+		}
+	}
+
+	auto l1 = layer_table.find(src_rid);
+	if (l1 != layer_table.end()) {
+		auto l2 = l1->second.find(cur_rid);
+		if (l2 != l1->second.end()) {
+			auto l3 = l2->second.find(dst_rid);
+			if (l3 != l2->second.end())
+				lyr = l3->second;
+		}
+	}
+
+	if (next < 0 || lyr < 0) {
+		// missing entry => fallback
+		auto res = fallback_routing->route(router_list, n_routers, n_nodes, n_vcs, src_rid, cur_rid, cur_vc, dst_nid, dst_rid, in_port, flit_id);
+		vector<tuple<int, int, int>> out;
+		out.reserve(res.size());
+		for (auto &t : res)
+			out.emplace_back(get<0>(t), fallback_vc_begin, n_vcs - 1);
+		return out;
+	}
+
+	auto ports = get_ports(cur_rid, next);
+	if (ports.empty()) {
+		cerr << "LASH_TOR ERROR: no port from " << cur_rid << " to " << next
+				 << endl;
+		assert(false);
+	}
+
+	// Layer -> VC range
+	if (lyr < 0 || lyr >= (int)layer_to_vc.size()) {
+		vector<tuple<int, int, int>> out;
+		for (int p : ports)
+			out.emplace_back(p, fallback_vc_begin, n_vcs - 1);
+		return out;
+	}
+
+	auto vr = layer_to_vc[lyr];
+	int vc_b = max(0, vr.begin);
+	int vc_e = min(n_vcs - 1, vr.end);
+	if (vc_e < vc_b) {
+		vc_b = fallback_vc_begin;
+		vc_e = n_vcs - 1;
+	}
+
+	vector<tuple<int, int, int>> result;
+	result.reserve(ports.size());
+	for (int p : ports)
+		result.emplace_back(p, vc_b, vc_e);
+	return result;
+}
+
+void lash_tor_routing::validate_tables(
+		const vector<map<int, map<int, tuple<int, int, int>>>> &router_list,
+		int n_routers) const {
+
+	vector<vector<int>> adj_local(n_routers);
+	for (int u = 0; u < n_routers; ++u) {
+		auto it = router_list[1].find(u);
+		if (it == router_list[1].end())
+			continue;
+		for (const auto &e : it->second) {
+			int v = e.first;
+			adj_local[u].push_back(v);
+		}
+		sort(adj_local[u].begin(), adj_local[u].end());
+		adj_local[u].erase(unique(adj_local[u].begin(), adj_local[u].end()),
+											 adj_local[u].end());
+	}
+
+	auto bfs_dist = [&](int src, int dst) -> int {
+		vector<int> dist(n_routers, INT_MAX);
+		queue<int> q;
+		dist[src] = 0;
+		q.push(src);
+		while (!q.empty()) {
+			int u = q.front();
+			q.pop();
+			if (u == dst)
+				return dist[u];
+			for (int v : adj_local[u]) {
+				if (dist[v] == INT_MAX) {
+					dist[v] = dist[u] + 1;
+					q.push(v);
+				}
+			}
+		}
+		return INT_MAX;
+	};
+
+	int total_pairs = 0;
+	int fallback_pairs = 0;
+	int missing_entry = 0;
+	int loops_detected = 0;
+	int nonminimal = 0;
+	int layer_decrease = 0;
+
+	vector<char> has_nodes(n_routers, 0);
+	for (const auto &kv : node_to_router) {
+		int rid = kv.second;
+		if (0 <= rid && rid < n_routers)
+			has_nodes[rid] = 1;
+	}
+
+	for (int src = 0; src < n_routers; ++src) {
+		if (!has_nodes[src])
+			continue;
+
+		for (int dst = 0; dst < n_routers; ++dst) {
+			if (src == dst)
+				continue;
+			if (!has_nodes[dst])
+				continue;
+
+			total_pairs++;
+
+			// fallback
+			if (fallback_paths.count(src) && fallback_paths.at(src).count(dst) &&
+					fallback_paths.at(src).at(dst)) {
+				fallback_pairs++;
+				continue;
+			}
+
+			// must exist
+			if (!routing_table.count(src) || !routing_table.at(src).count(src) ||
+					!routing_table.at(src).at(src).count(dst)) {
+				missing_entry++;
+				continue;
+			}
+
+			// Walk the path from src to dst
+			unordered_set<int> visited;
+			visited.reserve((size_t)n_routers);
+
+			int cur = src;
+			int hops = 0;
+			int last_layer = -1;
+			bool bad = false;
+
+			while (cur != dst) {
+				if (visited.count(cur)) {
+					loops_detected++;
+					bad = true;
+					break;
+				}
+				visited.insert(cur);
+
+				// next hop lookup
+				auto &rt_src = routing_table.at(src);
+				if (!rt_src.count(cur) || !rt_src.at(cur).count(dst)) {
+					missing_entry++;
+					bad = true;
+					break;
+				}
+				int nxt = rt_src.at(cur).at(dst);
+
+				// layer lookup
+				auto &lt_src = layer_table.at(src);
+				if (!lt_src.count(cur) || !lt_src.at(cur).count(dst)) {
+					missing_entry++;
+					bad = true;
+					break;
+				}
+				int lyr = lt_src.at(cur).at(dst);
+
+				if (last_layer != -1 && lyr < last_layer) {
+					layer_decrease++;
+					bad = true;
+					break;
+				}
+				last_layer = lyr;
+
+				// prevent infinite walks
+				hops++;
+				if (hops > n_routers) {
+					loops_detected++;
+					bad = true;
+					break;
+				}
+
+				cur = nxt;
+			}
+
+			if (bad)
+				continue;
+
+			int d = bfs_dist(src, dst);
+			if (d == INT_MAX) {
+				nonminimal++;
+			} else if (hops != d) {
+				nonminimal++;
+			}
+		}
+	}
+
+	// Print summary
+	cout << "\n=== LASH-TOR validation summary ===\n";
+	cout << "Validated pairs (routers with nodes only): " << total_pairs << "\n";
+	cout << "Fallback pairs: " << fallback_pairs << " ("
+			 << (total_pairs ? (100.0 * fallback_pairs / total_pairs) : 0.0)
+			 << "%)\n";
+	cout << "Missing table entries: " << missing_entry << "\n";
+	cout << "Loops detected: " << loops_detected << "\n";
+	cout << "Non-minimal hopcount pairs: " << nonminimal << "\n";
+	cout << "Layer decreases detected: " << layer_decrease << "\n";
+	cout << "==================================\n\n";
+}

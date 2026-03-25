@@ -1,0 +1,246 @@
+#include "multi.hpp"
+#include <map>
+#include <iostream>
+#include <vector>
+#include <queue>
+#include <stack>
+#include <algorithm>
+#include <functional>
+#include <string>
+#include <tuple>
+#include <set>
+#include <cmath>
+
+using namespace std;
+
+class DinicMaxFlow {
+private:
+    struct Edge { int to, capacity, flow, rev, vc; };
+    vector<vector<Edge>> adj;
+    vector<int> level;
+    vector<int> ptr;
+    int N_nodes = 0;
+
+    bool bfs(int s, int t) {
+        level.assign(N_nodes, -1);
+        level[s] = 0;
+        queue<int> q; q.push(s);
+        while (!q.empty()) {
+            int u = q.front(); q.pop();
+            for (const auto &e : adj[u]) {
+                if (e.capacity > 0 && level[e.to] == -1) {
+                    level[e.to] = level[u] + 1;
+                    q.push(e.to);
+                }
+            }
+        }
+        return level[t] != -1;
+    }
+
+    int dfs(int u, int t) {
+        if (u == t) return 1;
+        for (int &i = ptr[u]; i < (int)adj[u].size(); ++i) {
+            Edge &edge = adj[u][i];
+            int v = edge.to;
+            if (edge.capacity > 0 && level[v] == level[u] + 1) {
+                if (int pushed = dfs(v, t)) {
+                    edge.capacity -= pushed;
+                    adj[v][edge.rev].capacity += pushed;
+                    edge.flow += pushed;
+                    adj[v][edge.rev].flow -= pushed;
+                    return pushed;
+                }
+            }
+        }
+        return 0;
+    }
+
+    long long max_flow(int s, int t) {
+        long long flow = 0;
+        while (bfs(s, t)) {
+            ptr.assign(N_nodes, 0);
+            while (int pushed = dfs(s, t)) flow += pushed;
+        }
+        return flow;
+    }
+
+	// Function to extract one path from s to t with positive flow
+    vector<tuple<int, int, int>> extract_one_path(int s, int t) {
+        vector<tuple<int, int, int>> path;
+        // Visited array must be FRESH for every path decomposition search.
+        vector<bool> visited(N_nodes, false);
+       	// Use DFS to find a path with positive flow
+        function<bool(int)> path_dfs = [&](int u) {
+			// If we reached the sink, return true
+            if (u == t) return true;
+            visited[u] = true; // Mark node to prevent cycles in this path
+			// Explore all edges from u
+            for (size_t i = 0; i < adj[u].size(); ++i) {
+                Edge& edge = adj[u][i];
+                int v = edge.to;
+				// Edge must have positive flow and v must not be visited (otherwise cycle in this path)
+                if (edge.flow > 0 && !visited[v]) {
+					// Recur to v
+                    if (path_dfs(v)) {
+                        // Success: Path found through v.
+                        edge.flow -= 1;
+                        path.emplace_back(u, v, edge.vc);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+		// If we found a path, reverse it to get correct order
+        if (path_dfs(s)) {
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+        return {};
+    }
+
+	// Function to find all non-intersecting paths from s to t
+    vector<vector<tuple<int, int, int>>> extract_paths(int s, int t, long long total_flow) {
+        vector<vector<tuple<int, int, int>>> paths;
+        long long remaining_flow = total_flow;
+        while (remaining_flow > 0) {
+            vector<tuple<int, int, int>> path = extract_one_path(s, t);
+            if (!path.empty()) {
+                paths.push_back(path);
+                remaining_flow--;
+            } else {
+                cerr << "Error: Flow decomposition halted prematurely with " << remaining_flow << " remaining." << endl;
+                break;
+            }
+        }
+        return paths;
+    }
+
+public:
+	// constructor sets N and resizes adjacency list
+    DinicMaxFlow(int n) : adj(n), level(), ptr(), N_nodes(n) {}
+
+	// Add directed edge u->v with given virtual channel vc
+    void add_edge(int u, int v, int vc) {
+		// Sanity checking:
+		if (u < 0 || u >= N_nodes || v < 0 || v >= N_nodes) {
+			cerr << "Error: Invalid node index in add_edge: u=" << u << ", v=" << v << " in a graph with " << N_nodes << " nodes." << endl;
+			exit(1);
+		}
+        Edge forward = {v, 1, 0, (int)adj[v].size(), vc};
+        adj[u].push_back(forward);
+        Edge backward = {u, 0, 0, (int)adj[u].size() - 1, -1};
+        adj[v].push_back(backward);
+    }
+
+	// Main function to compute non-intersecting paths from s to t in n x n grid
+    vector<vector<tuple<int,int,int>>> compute_non_intersectiong_paths(int s, int t) {
+        long long total_flow = max_flow(s, t);
+        if (total_flow > 0) return extract_paths(s, t, total_flow);
+        return {};
+    }
+};
+
+
+void multi_compute_distinct_paths_for_one_src_dst_pair(std::map<int, std::map<std::tuple<int,int,int,int>, std::vector<std::tuple<int,int,int>>>>& multi_routing_table, std::map<int,int> node_list, std::vector<std::map<int, std::map<int, std::tuple<int,int,int>>>> router_list, std::map<int, std::map<int, int>> router_and_outport_to_next_router, int n_vcs, int src_rid, int dst_rid, routing_function& rf, bool multi_vertex_disjoint){
+	// Sanity check
+	if (router_list[0].size() != router_list[1].size()) {
+		cerr << "Error: Inconsistent router list sizes in multi_compute_distinct_paths_for_one_src_dst_pair." << endl;
+		exit(1);
+	}
+	// Extract parameters
+	int n_routers = router_list[0].size();
+	int n_nodes = node_list.size();
+	int src_in_port = -1;
+	int dst_nid = -1;
+	// Identify the first node that is attached to the source router and use it to get the input port at the source router
+	if (!router_list[0][src_rid].empty()) {
+		src_in_port = get<1>(router_list[0][src_rid].begin()->second);
+	} else {
+		cerr << "Error: Source router " << src_rid << " has no attached nodes." << endl;
+		exit(1);
+	}
+	// Identify the first node that is attached to the destination router
+	if (!router_list[0][dst_rid].empty()) {
+		dst_nid = router_list[0][dst_rid].begin()->first;
+	} else {
+		cerr << "Error: Destination router " << dst_rid << " has no attached nodes." << endl;
+		exit(1);
+	}
+	// Create DinicMaxFlow instance
+	DinicMaxFlow max_flow_algorithm(n_routers);
+	// Variables used below
+	int cur_rid, cur_port, cur_vc;
+	int nxt_rid, nxt_vc_start, nxt_vc_end, nxt_port, nxt_vc;
+	tuple<int,int,int> cur;
+	tuple<int,int,int> nxt;
+	set<tuple<int,int,int>> existing_edges;
+	// Add all edges. We only add edges that are returned by the routing function when routing from src to dst.
+	// For this, we perform BFS on the routing graph from src to dst.
+	vector<tuple<int,int,int>> visited; 	// (rid, incoming_port, incoming_vc)
+	vector<tuple<int,int,int>> queue;		// (rid, incoming_port, incoming_vc)
+	visited.push_back(make_tuple(src_rid, src_in_port, 0));		// VC 0 is used for injection
+	queue.push_back(make_tuple(src_rid, src_in_port, 0));		// VC 0 is used for injection
+	while (!queue.empty()) {
+		cur = queue.front();
+		cur_rid = get<0>(cur);
+		cur_port = get<1>(cur);
+		cur_vc = get<2>(cur);
+		queue.erase(queue.begin());
+		// Use routing function to get possible next hops
+		if (src_rid == 4 and dst_rid == 32 and cur_rid == 36) {
+			cout << "MULTI: Calling routing function with src_rid=" << src_rid << ", dst_rid=" << dst_rid << ", cur_rid=" << cur_rid << ", cur_port=" << cur_port << ", cur_vc=" << cur_vc << endl;
+		}
+		vector<tuple<int, int, int>> next_hops = rf.route(router_list, n_routers, n_nodes, n_vcs, src_rid, cur_rid, cur_vc, dst_nid, dst_rid, cur_port);
+		if (src_rid == 4 and dst_rid == 32 and cur_rid == 36) {
+            cout << "Valid next hops are: " << endl;
+            for (tuple<int,int,int> valid_next_hop : next_hops) {
+                int next_rid = router_and_outport_to_next_router[cur_rid][get<0>(valid_next_hop)];
+                cout << "- Router " << next_rid << " Port " << std::get<0>(valid_next_hop) << " with VC range " << std::get<1>(valid_next_hop) << "-" << std::get<2>(valid_next_hop) << endl;
+            }
+        }
+		// Iterate over possible next hops
+		for (const tuple<int, int, int>& next_hop : next_hops) {
+			nxt_rid = router_and_outport_to_next_router[cur_rid][get<0>(next_hop)];
+			nxt_vc_start = get<1>(next_hop);
+			nxt_vc_end = get<2>(next_hop);
+			nxt_port = get<1>(router_list[1][cur_rid][nxt_rid]);
+			// Iterate over VC range
+			for (nxt_vc = nxt_vc_start; nxt_vc <= nxt_vc_end; nxt_vc++) {
+				// Add edge to max flow graph if it does not already exist
+				if (existing_edges.find(make_tuple(cur_rid, nxt_rid, nxt_vc)) == existing_edges.end()) {
+					max_flow_algorithm.add_edge(cur_rid, nxt_rid, nxt_vc);
+					existing_edges.insert(make_tuple(cur_rid, nxt_rid, nxt_vc));
+				}
+				// Check if the next hop has been visited (i.e. it is either in the queue or has been processed)
+				// Do not add the destination router to the queue (no need to explore beyond destination)
+				nxt = make_tuple(nxt_rid, nxt_port, nxt_vc);
+				if ((find(visited.begin(), visited.end(), nxt) == visited.end()) && (nxt_rid != dst_rid)) {
+					visited.push_back(nxt);
+					queue.push_back(nxt);
+				}
+			}
+		}
+	}
+	// Now, the max flow graph is constructed. Compute non-intersecting paths.
+	vector<vector<tuple<int,int,int>>> paths = max_flow_algorithm.compute_non_intersectiong_paths(src_rid, dst_rid);
+	int last_vc, rid1, rid2, vc, out_port, in_port;
+	// Configure the computed paths in the multi routing table
+	for (vector<tuple<int,int,int>> path : paths) {
+		last_vc = 0; // 0 is used for injection, i.e., on the first hop, the incoming vc is 0
+		in_port = 0; // use 0 as input port for a node (first hop); Make sure to use 0 instead of the real input port when accessing the routing table
+		for (tuple<int,int,int> hop : path) {
+			rid1 = get<0>(hop);
+			rid2 = get<1>(hop);
+			vc = get<2>(hop);
+			out_port = get<0>(router_list[1][rid1][rid2]);
+			multi_routing_table[rid1][make_tuple(src_rid, dst_rid, in_port, last_vc)].push_back(make_tuple(out_port, vc, vc));
+			if (src_rid == 4 and dst_rid == 32 and rid1 == 36) {
+				int next_rid = router_and_outport_to_next_router[rid1][out_port];
+				cout << "Adding entry to multi routing table[" << src_rid << "," << dst_rid << "," << in_port << "," << last_vc << "]: " << next_rid << " (VC = " << vc << ")" << endl;
+			}
+			last_vc = vc;
+			in_port = get<1>(router_list[1][rid1][rid2]);
+		}
+	}
+}

@@ -1,0 +1,295 @@
+
+#ifndef LASH_TOR_ROUTING_HPP
+#define LASH_TOR_ROUTING_HPP
+
+#include <fstream>
+#include <cereal/types/vector.hpp>
+#include <cereal/archives/binary.hpp>
+
+#include "routing_function.hpp"
+#include "up_down_routing.hpp"
+#include "left_right_routing.hpp"
+#include "lturn_routing.hpp"
+#include <climits>
+#include <cmath>
+#include <functional>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <queue>
+#include <set>
+#include <tuple>
+#include <vector>
+
+class Configuration;
+
+class lash_tor_routing : public routing_function {
+public:
+	lash_tor_routing(const Configuration &config);
+
+	void initialize(
+			const std::vector<std::map<int, std::map<int, std::tuple<int, int, int>>>>
+					&router_list,
+			int n_routers, int n_vcs) const;
+
+	std::vector<std::tuple<int, int, int>>
+	route(std::vector<std::map<int, std::map<int, std::tuple<int, int, int>>>>
+						router_list,
+				int n_routers, int n_nodes, int n_vcs, int src_rid_, int cur_rid, int cur_vc, int dst_nid, int dst_rid,
+				int in_port, int flit_id) const;
+
+	// Statistics and debugging
+	void print_layer_statistics() const;
+	void print_path_details() const;
+	void print_vc_load_statistics() const;
+	void reset_vc_statistics() const;
+	void print_final_statistics() const;
+
+private:
+	const Configuration &_config;
+	mutable bool initialized = false;
+
+	// Routing parameters
+	mutable int num_vcs;
+	mutable int n_layers;
+	mutable int fallback_layer;
+	mutable string fallback_alg;
+	mutable int fallback_max_hops;
+
+	// Core routing structures
+	struct PathSegment {
+		int start_router;
+		int end_router;
+		int layer;
+		std::vector<int> router_sequence;
+		std::vector<int> output_ports;
+	};
+
+	struct PathInfo {
+		std::vector<PathSegment> segments;
+		std::vector<int> transition_routers;
+		std::vector<int> transition_from_layer;
+		std::vector<int> transition_to_layer;
+		int total_hops;
+		bool uses_fallback;
+
+		PathInfo() : total_hops(0), uses_fallback(false) {}
+	};
+
+	struct PathEvaluation {
+		std::vector<int> path;
+		std::vector<int> split_points;
+		int required_layers;
+		int total_hops;
+
+		PathEvaluation() : required_layers(INT_MAX), total_hops(INT_MAX) {}
+	};
+
+	struct ChannelDependency {
+		int from_router;
+		int to_router;
+		int destination;
+		int layer;
+
+		bool operator<(const ChannelDependency &other) const {
+			if (from_router != other.from_router)
+				return from_router < other.from_router;
+			if (to_router != other.to_router)
+				return to_router < other.to_router;
+			if (destination != other.destination)
+				return destination < other.destination;
+			return layer < other.layer;
+		}
+	};
+
+	struct FlitState {
+		int flit_id;
+		int src_rid; // Source router for this flit
+		int current_layer;
+		int current_segment_idx;
+		int remaining_segments;
+		int remaining_hops_in_segment;
+		bool in_fallback;
+
+		FlitState()
+				: flit_id(-1), src_rid(-1), current_layer(0), current_segment_idx(0),
+					remaining_segments(0), remaining_hops_in_segment(0),
+					in_fallback(false) {}
+	};
+
+	// Topology information
+	mutable std::map<int, int> node_to_router; // node_id -> router_id
+	mutable std::vector<std::vector<int>> adj; // adjacency list
+	mutable std::map<int, std::map<int, std::vector<int>>>
+			edge_ports; // [from][to] = list of ports
+
+	mutable std::map<int, std::map<int, std::map<int, int>>>
+			routing_table; // [src][current][dst] = next_hop
+	mutable std::map<int, std::map<int, std::map<int, int>>>
+			layer_table; // [src][current][dst] = layer
+
+	// For backward compatibility and debugging
+	mutable std::map<int, std::map<int, std::vector<PathInfo>>>
+			shortest_paths; // [src][dst] = paths
+	mutable std::map<int, std::map<int, bool>>
+			fallback_paths; // [src][dst] = needs_fallback
+
+	// Dependency graphs for deadlock avoidance
+	mutable std::vector<std::map<int, std::set<int>>>
+			layer_deps; // [layer][from] = set of to routers
+	mutable std::set<ChannelDependency> channel_deps;
+
+	// BFS tree for fallback layer (up/down routing)
+	mutable std::vector<int> parent;
+	mutable std::vector<int> level;
+	mutable int root;
+
+	// Previous router mapping for source detection
+	mutable std::map<int, std::map<int, int>>
+			prev_router_map; // [router][in_port] = prev_router
+
+	// Flit state tracking
+	mutable std::map<int, FlitState> flit_state;
+
+	// Source build tracking
+	mutable std::vector<bool> source_built;
+
+	// Statistics
+	mutable std::vector<long long> vc_usage_counts; // per-VC flit count
+	mutable std::vector<long long> vc_peak_usage;	 // peak flits per VC
+	mutable std::map<int, int>
+			flit_vc_assignment; // track which VC each flit uses
+	mutable long long total_vc_allocations;
+	mutable int max_layers_required;
+	mutable vector<int> source_max_layers;
+	mutable int fallback_count;
+
+	// Fallback routing
+	mutable std::unique_ptr<routing_function> fallback_routing;
+
+	// Private helper methods
+	void compute_prev_router_map(
+			const std::vector<std::map<int, std::map<int, std::tuple<int, int, int>>>>
+					&router_list,
+			int n_routers) const;
+
+	std::vector<int> get_ports(int from_rid, int to_rid) const;
+
+	// LASH-TOR core algorithms
+	std::vector<std::vector<int>> find_all_minimal_paths(
+			const std::vector<std::map<int, std::map<int, std::tuple<int, int, int>>>>
+					&router_list,
+			int src_rid, int dst_rid, int n_routers) const;
+	bool can_assign_to_layer(const std::vector<int> &segment, int layer,
+													 int dst_node) const;
+	bool creates_cycle(const std::vector<int> &segment, int layer,
+										 int dst_node) const;
+	void update_dependency_graph(const std::vector<int> &segment, int layer,
+															 int dst_node) const;
+	bool has_cycle_dfs(int node, const map<int, set<int>> &graph,
+										 map<int, int> &visited) const;
+	lash_tor_routing::PathEvaluation find_path_with_least_layers(
+			const vector<map<int, map<int, tuple<int, int, int>>>> &router_list,
+			int src_rid, int dst_rid, int n_routers) const;
+	PathEvaluation
+	find_best_path(vector<map<int, map<int, tuple<int, int, int>>>> router_list,
+								 int src_rid, int dst_rid, int n_routers) const;
+	PathInfo create_path_from_evaluation(const PathEvaluation &eval, int src_rid,
+																			 int dst_node) const;
+	bool assign_path_to_layers(const std::vector<int> &path, int src_rid,
+														 int dst_node, PathInfo &result) const;
+
+	// Path computation
+	void compute_paths_for_source(
+			const std::vector<std::map<int, std::map<int, std::tuple<int, int, int>>>>
+					&router_list,
+			int n_routers, int src_rid, vector<bool> router_has_nodes) const;
+
+	// Load balancing
+	void balance_layer_utilization(int src_rid) const;
+
+	// Up/down functions for fallback layer
+	bool is_up_move(int from_rid, int to_rid) const;
+	bool is_down_move(int from_rid, int to_rid) const;
+
+	// VC management
+	int get_layer_from_vc(int vc) const;
+	std::pair<int, int> get_vc_range(int layer) const;
+	void update_flit_state(int flit_id, int cur_rid, const PathInfo &path,
+												 int current_layer) const;
+
+	// VC statistics
+	void record_vc_usage(int vc, int count = 1) const;
+
+	// Debugging
+	void print_path(const PathInfo &path) const;
+
+	// The repetition in experiments (different repetitions use different random seeds and routing tables)
+	int repetition;
+	string cache_directory;
+
+	struct RoutingEntry {
+		int src;
+		int cur;
+		int dst;
+		int value; // next_hop for routing_table, layer for layer_table
+
+		template<class Archive>
+		void serialize(Archive &ar) {
+			ar(src, cur, dst, value);
+		}
+	};
+
+	class LashTorRoutingTable {
+	public:
+		mutable std::map<int, std::map<int, std::map<int,int>>> routing_table;
+		mutable std::map<int, std::map<int, std::map<int,int>>> layer_table;
+
+		// Save to disk
+		void save(const std::string &filename) const {
+			std::vector<RoutingEntry> flat_routing, flat_layer;
+
+			// Flatten routing_table
+			for (const auto &[src, m_cur] : routing_table)
+				for (const auto &[cur, m_dst] : m_cur)
+					for (const auto &[dst, next_hop] : m_dst)
+						flat_routing.push_back({src, cur, dst, next_hop});
+
+			// Flatten layer_table
+			for (const auto &[src, m_cur] : layer_table)
+				for (const auto &[cur, m_dst] : m_cur)
+					for (const auto &[dst, layer] : m_dst)
+						flat_layer.push_back({src, cur, dst, layer});
+
+			std::ofstream os(filename, std::ios::binary);
+			cereal::BinaryOutputArchive archive(os);
+			archive(flat_routing, flat_layer);
+		}
+
+		// Load from disk
+		void load(const std::string &filename) const {
+			std::vector<RoutingEntry> flat_routing, flat_layer;
+
+			std::ifstream is(filename, std::ios::binary);
+			if (!is)
+				return; // file doesn't exist
+
+			cereal::BinaryInputArchive archive(is);
+			archive(flat_routing, flat_layer);
+
+			// Clear previous data
+			routing_table.clear();
+			layer_table.clear();
+
+			// Reconstruct routing_table
+			for (const auto &entry : flat_routing)
+				routing_table[entry.src][entry.cur][entry.dst] = entry.value;
+
+			// Reconstruct layer_table
+			for (const auto &entry : flat_layer)
+				layer_table[entry.src][entry.cur][entry.dst] = entry.value;
+		}
+	}; 
+};
+
+#endif // LASH_TOR_ROUTING_HPP

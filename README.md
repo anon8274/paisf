@@ -6,6 +6,18 @@ This repository accompanies the paper:
 
 and contains all code and data required to reproduce the reported results.
 
+### Setup
+
+Before running experiments, build the necessary binaries:
+
+```bash
+cd booksim2/src
+make
+cd ../../
+```
+
+---
+
 ### Reproducing Experimental Results
 
 To reproduce all results, run:
@@ -13,10 +25,10 @@ To reproduce all results, run:
 python3 main.py -m
 ```
 
-- Outputs are stored in the `results` directory  
-- Runtime is approximately **3 weeks on a 64-core machine**  
-- The script spawns **one thread per core**  
-- The `results` directory already contains all generated data  
+- Outputs are stored in the `results` directory
+- Runtime is approximately **3 weeks on a 64-core machine**
+- The script spawns **one thread per core**
+- The `results` directory already contains all generated data
 - Results are only recomputed if existing files are **deleted or moved**
 
 ---
@@ -28,9 +40,9 @@ To generate all plots, run:
 python3 plots.py
 ```
 
-- Reads input from the `results` directory  
-- Stores figures in the `plots` directory  
-- Pre-generated plots are already included  
+- Reads input from the `results` directory
+- Stores figures in the `plots` directory
+- Pre-generated plots are already included
 - Existing plots will be **overwritten**
 
 ---
@@ -42,14 +54,3 @@ To verify our claim that **LASH** and **DFSSSP** require up to **6** and **8 vir
 python3 explore_vc_req.py
 python3 reports.py --vc_req
 ```
-
----
-
-### Verifying Confidence Interval Statistics
-
-To verify our claim about the **overall mean relative half-widths of 95% confidence intervals** across all experiments, run:
-```bash
-python3 reports.py --ci
-```
-
-- This step requires all results to be present in the `results` directory
