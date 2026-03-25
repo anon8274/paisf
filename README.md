@@ -54,3 +54,12 @@ To verify our claim that **LASH** and **DFSSSP** require up to **6** and **8 vir
 python3 explore_vc_req.py
 python3 reports.py --vc_req
 ```
+
+### Verifying Confidence Interval Statistics
+
+To verify our claim about the **overall mean relative half-widths of 95% confidence intervals** across all experiments, run:
+```bash
+python3 reports.py --ci
+```
+
+- This step requires all results to be present in the `results` directory
